@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+[ "$#" = 3 ] || exit 1
+data=$1
+cd "$data/workspace"
+exec "$data/bin/opencode" web --hostname "$2" --port "$3"
