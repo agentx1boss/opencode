@@ -1,0 +1,72 @@
+name: iStoreOS native artifacts
+
+on:
+  pull_request:
+    paths:
+      - "packaging/istoreos/**"
+      - ".github/workflows/istoreos-build.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric release version to embed (e.g. 1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - name: Validate native adapter
+        working-directory: packaging/istoreos
+        run: |
+          sh -n scripts/install.sh
+          sh -n scripts/platform.sh
+          sh -n files/opencode.init
+          sh -n files/opencode-run
+          python3 -m unittest discover -s tests -v
+  build:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'agentx1boss/opencode'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      OPENCODE_VERSION: ${{ inputs.version }}
+      OPENCODE_CHANNEL: latest
+      OPENCODE_RELEASE: ""
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - name: Validate version and native adapter
+        working-directory: packaging/istoreos
+        run: |
+          printf '%s\n' "$OPENCODE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          sh -n scripts/install.sh
+          sh -n scripts/platform.sh
+          sh -n files/opencode.init
+          sh -n files/opencode-run
+          python3 -m unittest discover -s tests -v
+      - uses: ./.github/actions/setup-bun
+      - name: Build using the existing upstream build script
+        run: bun run packages/opencode/script/build.ts
+      - name: Package native musl binaries and installer
+        run: |
+          mkdir -p istoreos-artifacts
+          for target in linux-x64-baseline-musl linux-arm64-musl; do
+            tar -czf "istoreos-artifacts/opencode-$target.tar.gz" \
+              -C "packages/opencode/dist/opencode-$target/bin" opencode
+          done
+          tar -czf istoreos-artifacts/opencode-istoreos-installer.tar.gz \
+            --exclude='__pycache__' -C packaging/istoreos README.md scripts files tests
+          git rev-parse HEAD > istoreos-artifacts/SOURCE_COMMIT
+          printf '%s\n' "$GITHUB_REPOSITORY" > istoreos-artifacts/SOURCE_REPOSITORY
+          printf '%s\n' "$OPENCODE_VERSION" > istoreos-artifacts/VERSION
+          cd istoreos-artifacts
+          sha256sum *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencode-istoreos-${{ inputs.version }}
+          path: istoreos-artifacts/
+          if-no-files-found: error
